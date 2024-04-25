@@ -1,0 +1,86 @@
+trigger:
+  branches:
+    include:
+      - main
+
+stages:
+- stage: CreateACR
+  displayName: 'Create Azure Container Registry'
+  jobs:
+  - job: CreateACRJob
+    displayName: 'Create ACR'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: AzureCLI@2
+      displayName: 'Azure CLI - ACR Create'
+      inputs:
+        azureSubscription: '<Azure Subscription>'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az acr create --name <ACR Name> --resource-group <Resource Group Name> --sku Basic --admin-enabled true
+
+- stage: BuildTestContainerize
+  displayName: 'Build, Test, and Containerize'
+  dependsOn: CreateACR
+  jobs:
+  - job: BuildTestContainerizeJob
+    displayName: 'Build, Test, and Containerize'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+
+    # Build
+    - task: Docker@2
+      displayName: 'Build Docker image'
+      inputs:
+        containerRegistry: '<ACR Name>'
+        repository: '<ACR Name>/<Image Name>'
+        command: 'build'
+        Dockerfile: '<Path to Dockerfile>'
+        tags: |
+          $(Build.BuildId)
+          latest
+
+    # Test
+    - script: |
+        # Run your tests here
+      displayName: 'Run tests'
+
+    # Containerize
+    - task: Docker@2
+      displayName: 'Push Docker image to ACR'
+      inputs:
+        containerRegistry: '<ACR Name>'
+        repository: '<ACR Name>/<Image Name>'
+        command: 'push'
+        tags: |
+          $(Build.BuildId)
+          latest
+
+- stage: DeployVerify
+  displayName: 'Deploy and Verify'
+  dependsOn: BuildTestContainerize
+  jobs:
+  - job: DeployVerifyJob
+    displayName: 'Deploy and Verify'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    # Configure Kubernetes
+    - task: KubernetesManifest@0
+      displayName: 'Configure Kubernetes'
+      inputs:
+        connectionType: 'Azure Resource Manager'
+        azureSubscriptionEndpoint: '<Azure Subscription Endpoint>'
+        azureResourceGroup: '<Resource Group Name>'
+        kubernetesCluster: '<Kubernetes Cluster Name>'
+        command: 'apply'
+        arguments: '-f <Path to Kubernetes Deployment YAML>'
+
+    # Verify deployment
+    - script: |
+        # Add verification steps here
+      displayName: 'Verify Deployment'
